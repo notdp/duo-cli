@@ -23,7 +23,11 @@ from datetime import datetime, timezone
 import click
 
 from droid_agent_sdk import AgentMessage, FIFOTransport
-from droid_agent_sdk.protocol import add_user_message_request
+from droid_agent_sdk.protocol import (
+    add_user_message_request,
+    interrupt_session_request,
+    update_session_settings_request,
+)
 
 from .state import SqliteBackend, SwarmState
 
@@ -252,6 +256,66 @@ def agents():
     
     for name in sorted(found):
         click.echo(name)
+
+
+@main.command()
+@click.argument("agent")
+def interrupt(agent: str):
+    """Interrupt an agent's current operation.
+    
+    \b
+    Examples:
+        duo interrupt opus
+        duo interrupt codex
+    """
+    state = get_state()
+    fifo_path = state.get(f"{agent}:fifo")
+    
+    if not fifo_path:
+        click.echo(f"Error: Agent '{agent}' not found", err=True)
+        sys.exit(1)
+    
+    transport = FIFOTransport.restore(fifo_path=fifo_path, log_path="/dev/null")
+    request = interrupt_session_request()
+    transport.send(request)
+    
+    click.echo(f"Interrupted {agent}")
+
+
+@main.command()
+@click.argument("agent")
+@click.option("--auto", "auto_mode", type=click.Choice(["off", "low", "high"]), help="Auto mode")
+@click.option("--model", help="Model to use")
+def settings(agent: str, auto_mode: str | None, model: str | None):
+    """Update agent session settings.
+    
+    \b
+    Examples:
+        duo settings opus --auto low
+        duo settings codex --model gpt-5.2
+        duo settings opus --auto high --model claude-opus-4-5-20251101
+    """
+    if not auto_mode and not model:
+        click.echo("Error: Specify --auto or --model", err=True)
+        sys.exit(1)
+    
+    state = get_state()
+    fifo_path = state.get(f"{agent}:fifo")
+    
+    if not fifo_path:
+        click.echo(f"Error: Agent '{agent}' not found", err=True)
+        sys.exit(1)
+    
+    transport = FIFOTransport.restore(fifo_path=fifo_path, log_path="/dev/null")
+    request = update_session_settings_request(auto_mode=auto_mode, model=model)
+    transport.send(request)
+    
+    parts = []
+    if auto_mode:
+        parts.append(f"auto={auto_mode}")
+    if model:
+        parts.append(f"model={model}")
+    click.echo(f"Updated {agent}: {', '.join(parts)}")
 
 
 if __name__ == "__main__":
