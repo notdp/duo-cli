@@ -30,6 +30,14 @@ from droid_agent_sdk.protocol import (
 )
 
 from duoduo.state import SqliteBackend, SwarmState
+from duoduo.launcher import (
+    start_session,
+    cleanup_old_processes,
+    cleanup_comments,
+    cleanup_fix_branches,
+    get_pr_info,
+    ORCHESTRATOR_PROMPT,
+)
 
 
 def get_env(name: str, required: bool = True) -> str | None:
@@ -68,12 +76,168 @@ def main():
     
     \b
     Examples:
+        duo init
         duo send orchestrator "Review complete, no issues"
         duo set stage 2
         duo get stage
         duo status
     """
     pass
+
+
+@main.command()
+@click.argument("pr_number", required=False, type=int)
+@click.option("--runner", default=None, help="Runner mode: local, droid, actions")
+@click.option("--no-cleanup", is_flag=True, help="Skip cleanup step")
+@click.option("--watch", is_flag=True, help="Watch progress after init")
+def init(pr_number: int | None, runner: str | None, no_cleanup: bool, watch: bool):
+    """Initialize duoduo PR review.
+    
+    \b
+    Examples:
+        duo init                    # Auto-detect PR from current branch
+        duo init 123                # Specify PR number
+        duo init --runner actions   # Actions mode (uses env vars)
+        duo init --watch            # Watch progress after init
+    """
+    # Determine runner mode
+    runner = runner or os.environ.get("RUNNER", "local")
+    
+    # Get PR info
+    if runner == "actions":
+        # Actions mode: read from environment variables
+        repo = os.environ.get("DROID_REPO")
+        pr = os.environ.get("DROID_PR_NUMBER")
+        branch = os.environ.get("DROID_BRANCH") or os.environ.get("PR_BRANCH")
+        base = os.environ.get("DROID_BASE") or os.environ.get("BASE_BRANCH")
+        
+        if not all([repo, pr, branch, base]):
+            click.echo("Error: Missing environment variables for actions mode", err=True)
+            click.echo("Required: DROID_REPO, DROID_PR_NUMBER, DROID_BRANCH, DROID_BASE", err=True)
+            sys.exit(1)
+        
+        pr_number = int(pr)
+    else:
+        # Local/Droid mode: get from gh CLI
+        info = get_pr_info(pr_number)
+        if not info:
+            click.echo("Error: Cannot get PR info. Run from a PR branch or specify PR number.", err=True)
+            sys.exit(1)
+        
+        pr_number = info["number"]
+        repo = info["repo"]
+        branch = info["branch"]
+        base = info["base"]
+    
+    click.echo(f"🚀 Duo Review")
+    click.echo(f"   PR: #{pr_number} ({branch} → {base})")
+    click.echo(f"   Repo: {repo}")
+    click.echo(f"   Runner: {runner}")
+    click.echo("")
+    
+    # Cleanup
+    if not no_cleanup:
+        click.echo("🧹 Cleaning up...")
+        cleanup_old_processes(repo, pr_number)
+        cleanup_comments(repo, pr_number)
+        cleanup_fix_branches(repo, pr_number)
+    
+    # Initialize state
+    safe_repo = repo.replace("/", "-")
+    db_path = f"/tmp/duo-{safe_repo}-{pr_number}.db"
+    
+    # Remove old database
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    if os.path.exists(f"{db_path}-wal"):
+        os.remove(f"{db_path}-wal")
+    if os.path.exists(f"{db_path}-shm"):
+        os.remove(f"{db_path}-shm")
+    
+    backend = SqliteBackend(db_path)
+    state = SwarmState(backend, repo, pr_number)
+    state.init(branch=branch, base=base, runner=runner)
+    
+    # Start Orchestrator
+    click.echo("🤖 Starting Orchestrator...")
+    result = start_session(
+        name="orchestrator",
+        model="claude-opus-4-5-20251101",
+        pr_number=pr_number,
+        repo=repo,
+        auto_level="high",
+    )
+    
+    state.set_agent(
+        "orchestrator",
+        session=result["session_id"],
+        fifo=result["fifo"],
+        pid=str(result["pid"]),
+        log=result["log"],
+        model=result["model"],
+    )
+    
+    click.echo(f"   Session: {result['session_id']}")
+    click.echo(f"   Log: tail -f {result['log']}")
+    click.echo("")
+    
+    # Send initial prompt
+    click.echo("📤 Sending initial prompt...")
+    prompt = ORCHESTRATOR_PROMPT.format(
+        pr_number=pr_number,
+        repo=repo,
+        branch=branch,
+        base=base,
+        runner=runner,
+    )
+    
+    transport = FIFOTransport.restore(fifo_path=result["fifo"], log_path="/dev/null")
+    request = add_user_message_request(prompt)
+    transport.send(request)
+    
+    click.echo("✅ Initialized")
+    click.echo("")
+    
+    if watch:
+        _watch_progress(state, repo, pr_number)
+
+
+def _watch_progress(state: SwarmState, repo: str, pr_number: int):
+    """Watch and display progress."""
+    import time
+    
+    stage_names = {
+        "1": "并行审查",
+        "2": "判断共识",
+        "3": "交叉确认",
+        "4": "修复验证",
+        "5": "汇总",
+    }
+    
+    last_stage = ""
+    
+    click.echo("📊 Watching progress (Ctrl+C to exit)...")
+    click.echo("")
+    
+    try:
+        while True:
+            stage = state.get("stage") or "1"
+            
+            if stage != last_stage:
+                if stage == "done":
+                    result = state.get("s2:result") or ""
+                    click.echo(f"✅ 完成: {result}")
+                    click.echo(f"   https://github.com/{repo}/pull/{pr_number}")
+                    break
+                else:
+                    name = stage_names.get(stage, stage)
+                    click.echo(f"⏳ 阶段 {stage}: {name}中...")
+                last_stage = stage
+            
+            time.sleep(2)
+    except KeyboardInterrupt:
+        click.echo("")
+        click.echo("⚠️  已退出监控，Orchestrator 仍在后台运行")
 
 
 @main.command()
