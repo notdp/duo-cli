@@ -1,15 +1,12 @@
-# duo-cli
+# duoduo
 
 CLI tools for duoduo multi-agent PR review.
 
 ## Installation
 
 ```bash
-# First install the SDK
-pip install ~/developer/droid-agent-sdk
-
-# Then install duo-cli
-pip install ~/developer/duo-cli
+pip install git+https://github.com/notdp/droid-agent-sdk.git
+pip install git+https://github.com/notdp/duoduo.git
 ```
 
 ## Usage
@@ -27,27 +24,51 @@ duo status
 duo agents
 duo alive opus
 duo logs opus -f
+
+# Interrupt agent
+duo interrupt opus
+
+# Update settings
+duo settings opus --auto low
+
+# Message history
+duo messages
+duo messages --last 10
+
+# GitHub PR comments
+duo comment list
+duo comment get <node_id>
+duo comment edit <node_id> "new content"
+duo comment delete <node_id>
 ```
 
 ## Commands
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `send <agent> <msg>` | Send message | `duo send orchestrator "done"` |
-| `set <key> <value>` | Set state | `duo set stage 2` |
-| `get <key>` | Get state | `duo get stage` |
-| `status` | Show swarm | `duo status` |
-| `agents` | List agents | `duo agents` |
-| `alive <agent>` | Check alive | `duo alive opus` |
-| `logs <agent>` | Show logs | `duo logs opus -f` |
+| Command | Description |
+|---------|-------------|
+| `send <agent> <msg>` | Send message to agent |
+| `set <key> <value>` | Set state value |
+| `get <key>` | Get state value |
+| `status` | Show swarm status |
+| `agents` | List all agents |
+| `alive <agent>` | Check if agent is alive |
+| `logs <agent>` | Show agent logs |
+| `interrupt <agent>` | Interrupt agent |
+| `settings <agent>` | Update agent settings |
+| `messages` | Show message history |
+| `comment list` | List DUO comments |
+| `comment get` | Get comment by node ID |
+| `comment edit` | Edit comment |
+| `comment delete` | Delete comment |
 
 ## Environment Variables
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `DROID_PR_NUMBER` | PR number | Yes |
-| `DROID_AGENT_NAME` | Current agent | For `send` |
-| `DROID_REPO` | Repository | No |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DROID_REPO` | Yes | Repository (owner/repo) |
+| `DROID_PR_NUMBER` | Yes | PR number |
+| `DROID_AGENT_NAME` | No | Current agent name (for send) |
+| `GH_TOKEN` | No | GitHub token (workflow sets this) |
 
 ## License
 
