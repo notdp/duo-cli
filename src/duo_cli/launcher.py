@@ -256,3 +256,16 @@ RUNNER={runner}
 立即执行阶段 1。
 </system-instruction>
 """
+
+
+MENTION_PROMPT = """<system-instruction>
+你是 Orchestrator，负责编排 duo review 流程。
+首先 load skill: duoduo
+
+<USER_MENTION repo="{repo}" pr="{pr_number}" author="{author}">
+{body}
+</USER_MENTION>
+
+读取 ~/.factory/skills/duoduo/stages/0-mention-orchestrator.md 理解并处理用户请求。
+</system-instruction>
+"""

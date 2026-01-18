@@ -37,6 +37,7 @@ from duo_cli.launcher import (
     cleanup_fix_branches,
     get_pr_info,
     ORCHESTRATOR_PROMPT,
+    MENTION_PROMPT,
 )
 
 
@@ -627,6 +628,14 @@ def mention(author: str, stdin: bool):
     # Check for existing session
     session_id = state.get("orchestrator:session")
     
+    # Build mention prompt
+    mention_prompt = MENTION_PROMPT.format(
+        repo=repo,
+        pr_number=pr_number,
+        author=author,
+        body=body,
+    )
+    
     if session_id:
         # Has session → ensure alive and send message
         click.echo(f"Found session: {session_id}")
@@ -637,11 +646,9 @@ def mention(author: str, stdin: bool):
         # Ensure orchestrator is alive (resume if needed)
         fifo_path = ensure_agent_alive("orchestrator", state, pr_number, repo)
         
-        # Format and send message
-        msg = f'<USER_MENTION repo="{repo}" pr="{pr_number}" author="{author}">\n{body}\n</USER_MENTION>'
-        
+        # Send mention prompt
         transport = FIFOTransport.restore(fifo_path=fifo_path, log_path="/dev/null")
-        request = add_user_message_request(msg)
+        request = add_user_message_request(mention_prompt)
         transport.send(request)
         
         # Save to database
@@ -654,23 +661,24 @@ def mention(author: str, stdin: bool):
         bot_name = os.environ.get("BOT_NAME", "")
         _poll_mention_completion(state, repo, pr_number, bot_name)
     else:
-        # No session → start new review
-        click.echo("No session found, starting new review...")
+        # No session → start new with mention prompt
+        click.echo("No session found, starting new session...")
         
-        # Initialize state if needed
+        # Initialize state
         branch = os.environ.get("DROID_BRANCH", "")
         base = os.environ.get("DROID_BASE", "")
         runner = os.environ.get("RUNNER", "droid")
         pr_node_id = os.environ.get("DROID_PR_NODE_ID", "")
         
         state.init(branch=branch, base=base, runner=runner, pr_node_id=pr_node_id)
+        state.set("mention:status", "processing")
         
-        # Start orchestrator
+        # Start orchestrator with mention prompt
         result = start_session(
             name="orchestrator",
             pr_number=pr_number,
             repo=repo,
-            prompt=ORCHESTRATOR_PROMPT,
+            prompt=mention_prompt,
         )
         
         state.set_agent(
@@ -683,6 +691,10 @@ def mention(author: str, stdin: bool):
         )
         
         click.echo(f"✅ Started orchestrator (session: {result['session'][:8]}...)")
+        
+        # Poll for completion
+        bot_name = os.environ.get("BOT_NAME", "")
+        _poll_mention_completion(state, repo, pr_number, bot_name)
 
 
 @main.command()
