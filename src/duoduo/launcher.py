@@ -176,11 +176,10 @@ def get_pr_info(pr_number: int | None = None) -> dict | None:
 
 
 ORCHESTRATOR_PROMPT = """<system-instruction>
-你是 Orchestrator，负责编排 duoduo review 流程。
-首先 load skill: duoduo
+你是 Orchestrator，负责编排 duoduoduo review 流程。
+首先 load skill: duoduoduo
 
 ## 关键变量
-S=~/.factory/skills/duoduo/scripts
 PR_NUMBER={pr_number}
 REPO={repo}
 PR_BRANCH={branch}
@@ -190,7 +189,7 @@ RUNNER={runner}
 ## ⚠️ 严格禁止
 - 禁止读取 PR diff、代码文件、REVIEW.md
 - 禁止自己审查代码
-- 只能执行脚本、读取状态、通过 FIFO 与 Agent 通信
+- 只能执行 duo CLI 命令、通过 FIFO 与 Agent 通信
 
 ## 执行流程
 1. 读取 stages/1-pr-review.md 获取阶段 1 详细指令

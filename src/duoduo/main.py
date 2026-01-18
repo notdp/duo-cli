@@ -241,6 +241,65 @@ def _watch_progress(state: SwarmState, repo: str, pr_number: int):
 
 
 @main.command()
+@click.argument("agent", type=click.Choice(["opus", "codex"]))
+@click.option("--prompt-file", "-f", help="File containing initial prompt")
+def spawn(agent: str, prompt_file: str | None):
+    """Spawn an agent (opus or codex).
+    
+    \b
+    Examples:
+        duo spawn opus
+        duo spawn codex
+        duo spawn opus -f /path/to/prompt.txt
+    """
+    state = get_state()
+    repo = state.repo
+    pr_number = state.pr_number
+    
+    # Model mapping
+    models = {
+        "opus": "claude-opus-4-5-20251101",
+        "codex": "gpt-5.2",
+    }
+    model = models[agent]
+    
+    click.echo(f"🚀 Spawning {agent} ({model})...")
+    
+    result = start_session(
+        name=agent,
+        model=model,
+        pr_number=pr_number,
+        repo=repo,
+        auto_level="high",
+    )
+    
+    state.set_agent(
+        agent,
+        session=result["session_id"],
+        fifo=result["fifo"],
+        pid=str(result["pid"]),
+        log=result["log"],
+        model=result["model"],
+    )
+    
+    click.echo(f"   Session: {result['session_id']}")
+    click.echo(f"   FIFO: {result['fifo']}")
+    click.echo(f"   Log: {result['log']}")
+    
+    # Send initial prompt if provided
+    if prompt_file:
+        with open(prompt_file, "r") as f:
+            prompt = f.read()
+        
+        transport = FIFOTransport.restore(fifo_path=result["fifo"], log_path="/dev/null")
+        request = add_user_message_request(prompt)
+        transport.send(request)
+        click.echo(f"   Sent prompt from {prompt_file}")
+    
+    click.echo(f"✅ {agent} spawned")
+
+
+@main.command()
 @click.argument("agent")
 @click.argument("message")
 @click.option("-f", "--from", "from_agent", default=None, help="Override sender name")
