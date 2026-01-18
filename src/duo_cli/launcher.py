@@ -122,8 +122,17 @@ def resume_session(
         env=os.environ.copy(),
     )
     
-    # Wait for load_session to complete
-    time.sleep(2)
+    # Wait for load_session to complete (max 15 seconds)
+    # Response format: {"id":"load","result":{"session":...}}
+    for _ in range(30):
+        time.sleep(0.5)
+        try:
+            with open(log, "r") as f:
+                content = f.read()
+                if '"id":"load"' in content and '"result":{"session"' in content:
+                    break
+        except Exception:
+            pass
     
     return {
         "fifo": fifo,
