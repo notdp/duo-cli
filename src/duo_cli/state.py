@@ -130,10 +130,12 @@ class SwarmState:
             "model": self.get(f"{name}:model"),
         }
     
-    def init(self, branch: str, base: str, runner: str = "sdk", workspace: str | None = None) -> None:
+    def init(self, branch: str, base: str, runner: str = "sdk", workspace: str | None = None, pr_node_id: str | None = None) -> None:
         """Initialize swarm state."""
         self.set("repo", self.repo)
         self.set("pr", str(self.pr_number))
+        if pr_node_id:
+            self.set("pr_node_id", pr_node_id)
         self.set("branch", branch)
         self.set("base", base)
         self.set("runner", runner)
