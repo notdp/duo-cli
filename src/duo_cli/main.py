@@ -629,7 +629,10 @@ def mention(author: str, stdin: bool):
     
     if session_id:
         # Has session → ensure alive and send message
-        click.echo(f"Found session: {session_id[:8]}...")
+        click.echo(f"Found session: {session_id}")
+        
+        # Reset mention status for new mention
+        state.set("mention:status", "processing")
         
         # Ensure orchestrator is alive (resume if needed)
         fifo_path = ensure_agent_alive("orchestrator", state, pr_number, repo)
