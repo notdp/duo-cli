@@ -1,4 +1,4 @@
-"""CLI commands for duoduo multi-agent PR review.
+"""CLI commands for duo multi-agent PR review.
 
 Usage:
     duo send <agent> <message>   Send message to another agent
@@ -198,7 +198,7 @@ def _poll_mention_completion(state: SwarmState, repo: str, pr_number: int, bot_n
 
 
 HELP_TEXT = """\b
-duo-cli - CLI for duoduo multi-agent PR review.
+duo-cli - CLI for duo multi-agent PR review.
 
 \b
 Session Management:
@@ -303,7 +303,7 @@ class CustomGroup(click.Group):
 @click.group(cls=CustomGroup)
 @click.version_option(version="0.1.0")
 def main():
-    """duo-cli - CLI for duoduo multi-agent PR review."""
+    """duo-cli - CLI for duo multi-agent PR review."""
     pass
 
 
@@ -315,7 +315,7 @@ main.help = HELP_TEXT
 @click.option("--no-cleanup", is_flag=True, help="Skip cleanup step")
 @click.option("--watch", is_flag=True, help="Watch progress after init")
 def init(pr_number: int | None, no_cleanup: bool, watch: bool):
-    """Initialize duoduo PR review.
+    """Initialize duo PR review.
     
     Reads from environment variables:
       DROID_REPO, DROID_PR_NUMBER, DROID_BRANCH, DROID_BASE, DROID_PR_NODE_ID, RUNNER

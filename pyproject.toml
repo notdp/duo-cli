@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "duo-cli"
 version = "0.1.0"
-description = "CLI tools for duoduo multi-agent PR review"
+description = "CLI for duo multi-agent PR review"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "notdp" }]
-keywords = ["droid", "agent", "cli", "pr-review", "duoduo"]
+keywords = ["droid", "agent", "cli", "pr-review", "duo"]
 dependencies = [
     "click>=8.0",
     "droid-agent-sdk @ git+https://github.com/notdp/droid-agent-sdk.git",

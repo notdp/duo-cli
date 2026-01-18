@@ -1,4 +1,4 @@
-"""Session launcher for duoduo agents."""
+"""Session launcher for duo agents."""
 
 from __future__ import annotations
 
@@ -139,7 +139,7 @@ def cleanup_old_processes(repo: str, pr_number: int) -> None:
     
     # Kill processes
     subprocess.run(
-        ["pkill", "-f", f"duoduo.daemon.*{repo}.*{pr_number}"],
+        ["pkill", "-f", f"duo_cli.daemon.*{repo}.*{pr_number}"],
         capture_output=True,
     )
     
@@ -230,7 +230,7 @@ def get_pr_info(pr_number: int | None = None) -> dict | None:
 
 
 ORCHESTRATOR_PROMPT = """<system-instruction>
-你是 Orchestrator，负责编排 duoduo review 流程。
+你是 Orchestrator，负责编排 duo review 流程。
 首先 load skill: duoduo
 
 ## 关键变量

@@ -1,44 +1,44 @@
-# duoduo
+# duo-cli
 
-CLI tools for duoduo multi-agent PR review.
+CLI for duo multi-agent PR review.
 
 ## Installation
 
 ```bash
-pip install git+https://github.com/notdp/duoduo.git
+pipx install git+https://github.com/notdp/duo-cli.git
 ```
 
 ## Usage
 
 ```bash
 # Send message to another agent
-duo send orchestrator "Review complete, no issues found"
+duo-cli send orchestrator "Review complete, no issues found"
 
 # State management
-duo set stage 2
-duo get stage
+duo-cli set stage 2
+duo-cli get stage
 
 # Check status
-duo status
-duo agents
-duo alive opus
-duo logs opus -f
+duo-cli status
+duo-cli agents
+duo-cli alive opus
+duo-cli logs opus -f
 
 # Interrupt agent
-duo interrupt opus
+duo-cli interrupt opus
 
 # Update settings
-duo settings opus --auto low
+duo-cli settings opus --auto low
 
 # Message history
-duo messages
-duo messages --last 10
+duo-cli messages
+duo-cli messages --last 10
 
 # GitHub PR comments
-duo comment list
-duo comment get <node_id>
-duo comment edit <node_id> "new content"
-duo comment delete <node_id>
+duo-cli comment list
+duo-cli comment get <node_id>
+duo-cli comment edit <node_id> "new content"
+duo-cli comment delete <node_id>
 ```
 
 ## Commands
