@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "duo-cli"
+name = "duoduo"
 version = "0.1.0"
 description = "CLI tools for duoduo multi-agent PR review"
 readme = "README.md"
@@ -17,7 +17,7 @@ dependencies = [
 ]
 
 [project.scripts]
-duo = "duo_cli.main:main"
+duo = "duoduo.main:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/duo_cli"]
+packages = ["src/duoduo"]

@@ -29,7 +29,7 @@ from droid_agent_sdk.protocol import (
     update_session_settings_request,
 )
 
-from .state import SqliteBackend, SwarmState
+from duoduo.state import SqliteBackend, SwarmState
 
 
 def get_env(name: str, required: bool = True) -> str | None:
@@ -43,10 +43,11 @@ def get_env(name: str, required: bool = True) -> str | None:
 
 def get_state() -> SwarmState:
     """Get state backend from environment."""
-    pr_number = get_env("DROID_PR_NUMBER")
-    db_path = f"/tmp/duo-{pr_number}.db"
+    repo = get_env("DROID_REPO")
+    pr_number = int(get_env("DROID_PR_NUMBER"))
+    db_path = f"/tmp/duo-{repo.replace('/', '-')}-{pr_number}.db"
     backend = SqliteBackend(db_path)
-    return SwarmState(backend, pr_number)
+    return SwarmState(backend, repo, pr_number)
 
 
 def _is_alive(pid: str | None) -> bool:
@@ -109,6 +110,9 @@ def send(agent: str, message: str, from_agent: str | None):
     transport = FIFOTransport.restore(fifo_path=fifo_path, log_path="/dev/null")
     request = add_user_message_request(agent_msg.format())
     transport.send(request)
+    
+    # Save to database
+    state.add_message(from_agent, agent, message, timestamp)
     
     click.echo(f"Sent to {agent}")
 
@@ -259,6 +263,36 @@ def agents():
 
 
 @main.command()
+@click.argument("agent", required=False)
+@click.option("-n", "--last", "limit", type=int, help="Show last N messages")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def messages(agent: str | None, limit: int | None, as_json: bool):
+    """Show message history between agents.
+    
+    \b
+    Examples:
+        duo messages              # All messages
+        duo messages opus         # Messages involving opus
+        duo messages --last 10    # Last 10 messages
+        duo messages --json       # JSON output
+    """
+    state = get_state()
+    msgs = state.get_messages(agent=agent, limit=limit)
+    
+    if as_json:
+        click.echo(json.dumps(msgs, indent=2))
+        return
+    
+    if not msgs:
+        click.echo("No messages found")
+        return
+    
+    for msg in msgs:
+        ts = msg["timestamp"][:19].replace("T", " ")  # Trim to seconds
+        click.echo(f"[{ts}] {msg['from']} -> {msg['to']}: {msg['content'][:80]}")
+
+
+@main.command()
 @click.argument("agent")
 def interrupt(agent: str):
     """Interrupt an agent's current operation.
@@ -316,6 +350,178 @@ def settings(agent: str, auto_mode: str | None, model: str | None):
     if model:
         parts.append(f"model={model}")
     click.echo(f"Updated {agent}: {', '.join(parts)}")
+
+
+# =============================================================================
+# Comment commands
+# =============================================================================
+
+def _get_gh_env() -> dict:
+    """Get environment with GH_TOKEN if available."""
+    env = os.environ.copy()
+    # GH_TOKEN is set by workflow (App token or Actions bot)
+    # If not set, gh CLI will use local auth
+    return env
+
+
+def _run_gh(args: list[str]) -> subprocess.CompletedProcess:
+    """Run gh command with proper environment."""
+    return subprocess.run(
+        ["gh"] + args,
+        capture_output=True,
+        text=True,
+        env=_get_gh_env(),
+    )
+
+
+@main.group()
+def comment():
+    """Manage GitHub PR comments.
+    
+    \b
+    Examples:
+        duo comment list
+        duo comment get DUO-OPUS-R1
+        duo comment edit <node_id> "new content"
+        duo comment delete <node_id>
+    """
+    pass
+
+
+@comment.command("list")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def comment_list(as_json: bool):
+    """List all DUO comments on the PR.
+    
+    \b
+    Examples:
+        duo comment list
+        duo comment list --json
+    """
+    repo = get_env("DROID_REPO")
+    pr = get_env("DROID_PR_NUMBER")
+    
+    result = _run_gh([
+        "pr", "view", pr, "--repo", repo,
+        "--json", "comments",
+        "-q", '.comments[] | select(.body | test("<!-- duo-")) | {id: .id, marker: (.body | capture("<!-- (?<m>duo-[a-z0-9-]+) -->") | .m), createdAt: .createdAt}'
+    ])
+    
+    if result.returncode != 0:
+        click.echo(f"Error: {result.stderr}", err=True)
+        sys.exit(1)
+    
+    comments = []
+    for line in result.stdout.strip().split("\n"):
+        if line:
+            try:
+                comments.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass
+    
+    if as_json:
+        click.echo(json.dumps(comments, indent=2))
+        return
+    
+    if not comments:
+        click.echo("No DUO comments found")
+        return
+    
+    for cmt in comments:
+        click.echo(f"{cmt.get('marker', '?'):20} {cmt['id']}")
+
+
+@comment.command("get")
+@click.argument("node_id")
+def comment_get(node_id: str):
+    """Get a comment by node ID.
+    
+    \b
+    Examples:
+        duo comment get IC_kwDOxxx
+    """
+    repo = get_env("DROID_REPO")
+    pr = get_env("DROID_PR_NUMBER")
+    
+    result = _run_gh([
+        "pr", "view", pr, "--repo", repo,
+        "--json", "comments",
+        "-q", f'.comments[] | select(.id == "{node_id}") | .body'
+    ])
+    
+    if result.returncode != 0:
+        click.echo(f"Error: {result.stderr}", err=True)
+        sys.exit(1)
+    
+    if not result.stdout.strip():
+        click.echo(f"Comment '{node_id}' not found", err=True)
+        sys.exit(1)
+    
+    click.echo(result.stdout.strip())
+
+
+@comment.command("edit")
+@click.argument("node_id")
+@click.argument("body", required=False)
+@click.option("--stdin", is_flag=True, help="Read body from stdin")
+def comment_edit(node_id: str, body: str | None, stdin: bool):
+    """Edit a comment.
+    
+    \b
+    Examples:
+        duo comment edit IC_xxx "new content"
+        echo "new content" | duo comment edit IC_xxx --stdin
+    """
+    if stdin:
+        body = sys.stdin.read()
+    
+    if not body:
+        click.echo("Error: Body required (use argument or --stdin)", err=True)
+        sys.exit(1)
+    
+    body_json = json.dumps(body)
+    query = f'''mutation {{
+        updateIssueComment(input: {{id: "{node_id}", body: {body_json}}}) {{
+            issueComment {{ id }}
+        }}
+    }}'''
+    
+    result = _run_gh(["api", "graphql", "-f", f"query={query}"])
+    
+    if result.returncode != 0:
+        click.echo(f"Error: {result.stderr}", err=True)
+        sys.exit(1)
+    
+    click.echo(f"Updated {node_id}")
+
+
+@comment.command("delete")
+@click.argument("node_id")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
+def comment_delete(node_id: str, yes: bool):
+    """Delete a comment (silent, no timeline record).
+    
+    \b
+    Examples:
+        duo comment delete IC_xxx
+        duo comment delete IC_xxx -y
+    """
+    if not yes:
+        click.confirm(f"Delete comment {node_id}?", abort=True)
+    
+    query = f'''mutation {{
+        deleteIssueComment(input: {{id: "{node_id}"}}) {{
+            clientMutationId
+        }}
+    }}'''
+    
+    result = _run_gh(["api", "graphql", "-f", f"query={query}"])
+    
+    if result.returncode != 0:
+        click.echo(f"Error: {result.stderr}", err=True)
+        sys.exit(1)
+    
+    click.echo(f"Deleted {node_id}")
 
 
 if __name__ == "__main__":

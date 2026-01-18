@@ -40,6 +40,22 @@ class SqliteBackend:
                 PRIMARY KEY (namespace, key)
             )
         """)
+        self._conn.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                repo TEXT NOT NULL,
+                pr_number INTEGER NOT NULL,
+                runner TEXT,
+                workspace TEXT,
+                from_agent TEXT NOT NULL,
+                to_agent TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp TEXT NOT NULL
+            )
+        """)
+        self._conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_repo_pr ON messages(repo, pr_number)
+        """)
     
     def set(self, key: str, value: str) -> None:
         self._conn.execute(
@@ -83,11 +99,12 @@ class SwarmState:
     """Helper for managing swarm state."""
     
     backend: SqliteBackend
-    pr_number: str
+    repo: str
+    pr_number: int
     
     @property
     def key(self) -> str:
-        return f"duo:{self.pr_number}"
+        return f"duo:{self.repo}:{self.pr_number}"
     
     def set(self, field: str, value: str) -> None:
         self.backend.hset(self.key, field, value)
@@ -113,16 +130,62 @@ class SwarmState:
             "model": self.get(f"{name}:model"),
         }
     
-    def init(self, repo: str, branch: str, base: str, runner: str = "sdk") -> None:
+    def init(self, branch: str, base: str, runner: str = "sdk", workspace: str | None = None) -> None:
         """Initialize swarm state."""
-        self.set("repo", repo)
-        self.set("pr", self.pr_number)
+        self.set("repo", self.repo)
+        self.set("pr", str(self.pr_number))
         self.set("branch", branch)
         self.set("base", base)
         self.set("runner", runner)
+        if workspace:
+            self.set("workspace", workspace)
         self.set("stage", "1")
         self.set("started_at", str(int(time.time())))
     
     def delete(self) -> None:
         """Delete all swarm state."""
         self.backend.delete(self.key)
+    
+    def add_message(
+        self,
+        from_agent: str,
+        to_agent: str,
+        content: str,
+        timestamp: str,
+        runner: str | None = None,
+        workspace: str | None = None,
+    ) -> None:
+        """Save a message to the database."""
+        runner = runner or self.get("runner")
+        workspace = workspace or self.get("workspace")
+        self.backend._conn.execute(
+            """INSERT INTO messages 
+               (repo, pr_number, runner, workspace, from_agent, to_agent, content, timestamp) 
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (self.repo, self.pr_number, runner, workspace, from_agent, to_agent, content, timestamp),
+        )
+    
+    def get_messages(
+        self, 
+        agent: str | None = None, 
+        limit: int | None = None,
+    ) -> list[dict]:
+        """Get messages, optionally filtered by agent."""
+        query = "SELECT id, from_agent, to_agent, content, timestamp FROM messages WHERE repo = ? AND pr_number = ?"
+        params: list = [self.repo, self.pr_number]
+        
+        if agent:
+            query += " AND (from_agent = ? OR to_agent = ?)"
+            params.extend([agent, agent])
+        
+        query += " ORDER BY id DESC"
+        
+        if limit:
+            query += " LIMIT ?"
+            params.append(limit)
+        
+        rows = self.backend._conn.execute(query, params).fetchall()
+        return [
+            {"id": r[0], "from": r[1], "to": r[2], "content": r[3], "timestamp": r[4]}
+            for r in reversed(rows)
+        ]
