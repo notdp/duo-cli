@@ -2,8 +2,8 @@
 """Daemon for running droid session.
 
 Usage:
-    python -m duoduo.daemon <name> <model> <pr> <repo> <cwd> <auto>
-    python -m duoduo.daemon <name> "" <pr> <repo> <cwd> <auto> --resume <session_id>
+    python -m duo_cli.daemon <name> <model> <pr> <repo> <cwd> <auto>
+    python -m duo_cli.daemon <name> "" <pr> <repo> <cwd> <auto> --resume <session_id>
 """
 
 import json
@@ -11,6 +11,7 @@ import os
 import subprocess
 import sys
 import time
+import threading
 from pathlib import Path
 
 DROID = Path.home() / ".local" / "bin" / "droid"
@@ -18,7 +19,7 @@ DROID = Path.home() / ".local" / "bin" / "droid"
 
 def main():
     if len(sys.argv) < 7:
-        print("Usage: python -m duoduo.daemon <name> <model> <pr> <repo> <cwd> <auto> [--resume <session_id>]")
+        print("Usage: python -m duo_cli.daemon <name> <model> <pr> <repo> <cwd> <auto> [--resume <session_id>]")
         sys.exit(1)
     
     name = sys.argv[1]
@@ -58,7 +59,7 @@ def main():
     proc = subprocess.Popen(
         droid_args,
         stdin=subprocess.PIPE,
-        stdout=log_file,
+        stdout=subprocess.PIPE,  # Use PIPE to read and detect session ready
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
@@ -68,7 +69,7 @@ def main():
     
     if resume_mode and session_id:
         # Send load_session (restores conversation history)
-        load_req = {
+        req = {
             "jsonrpc": "2.0",
             "type": "request",
             "factoryApiVersion": "1.0.0",
@@ -76,11 +77,9 @@ def main():
             "params": {"sessionId": session_id},
             "id": "load",
         }
-        proc.stdin.write(json.dumps(load_req) + "\n")
-        proc.stdin.flush()
     else:
         # Send initialize_session (new session)
-        init_req = {
+        req = {
             "jsonrpc": "2.0",
             "type": "request",
             "factoryApiVersion": "1.0.0",
@@ -88,13 +87,44 @@ def main():
             "params": {"machineId": os.uname().nodename, "cwd": cwd},
             "id": "init",
         }
-        proc.stdin.write(json.dumps(init_req) + "\n")
-        proc.stdin.flush()
     
+    proc.stdin.write(json.dumps(req) + "\n")
+    proc.stdin.flush()
+    
+    # Read stdout, write to log, detect session ready
+    session_ready = False
+    
+    def is_session_ready(line: str) -> bool:
+        if resume_mode:
+            return '"id":"load"' in line and '"result":{"session"' in line
+        else:
+            return '"sessionId"' in line
+    
+    # Read until session is ready
+    for line in proc.stdout:
+        log_file.write(line)
+        log_file.flush()
+        
+        if not session_ready and is_session_ready(line):
+            session_ready = True
+            break
+    
+    # Start background thread to continue reading stdout -> log
+    def stdout_to_log():
+        try:
+            for line in proc.stdout:
+                log_file.write(line)
+                log_file.flush()
+        except Exception:
+            pass
+    
+    log_thread = threading.Thread(target=stdout_to_log, daemon=True)
+    log_thread.start()
+    
+    # Now open FIFO (this unblocks launcher's write)
     # Main loop: FIFO -> droid stdin
     try:
         while True:
-            # Check if droid process is still alive
             if proc.poll() is not None:
                 break
             
@@ -108,12 +138,10 @@ def main():
                 time.sleep(0.1)
                 continue
     finally:
-        # Cleanup
         log_file.close()
         if proc.poll() is None:
             proc.terminate()
             proc.wait(timeout=5)
-        # Remove FIFO
         try:
             os.remove(fifo)
         except Exception:
