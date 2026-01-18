@@ -5,7 +5,6 @@ CLI tools for duoduo multi-agent PR review.
 ## Installation
 
 ```bash
-pip install git+https://github.com/notdp/droid-agent-sdk.git
 pip install git+https://github.com/notdp/duoduo.git
 ```
 
