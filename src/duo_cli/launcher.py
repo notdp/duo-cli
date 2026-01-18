@@ -48,7 +48,7 @@ def start_session(
     # Start daemon
     daemon_proc = subprocess.Popen(
         [
-            "nohup", sys.executable, "-m", "duoduo.daemon",
+            "nohup", sys.executable, "-m", "duo_cli.daemon",
             name, model, pr, repo, cwd, auto_level,
         ],
         stdout=subprocess.DEVNULL,
@@ -113,7 +113,7 @@ def resume_session(
     # Start daemon in resume mode
     daemon_proc = subprocess.Popen(
         [
-            "nohup", sys.executable, "-m", "duoduo.daemon",
+            "nohup", sys.executable, "-m", "duo_cli.daemon",
             name, "", pr, repo, cwd, auto_level, "--resume", session_id,
         ],
         stdout=subprocess.DEVNULL,
