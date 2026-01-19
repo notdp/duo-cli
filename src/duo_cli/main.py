@@ -38,6 +38,7 @@ from duo_cli.launcher import (
     get_pr_info,
     ORCHESTRATOR_PROMPT,
     MENTION_PROMPT,
+    MENTION_INIT_PROMPT,
 )
 
 
@@ -661,7 +662,7 @@ def mention(author: str, stdin: bool):
         bot_name = os.environ.get("BOT_NAME", "")
         _poll_mention_completion(state, repo, pr_number, bot_name)
     else:
-        # No session → start new with mention prompt
+        # No session → start new with mention init prompt
         click.echo("No session found, starting new session...")
         
         # Initialize state
@@ -673,24 +674,35 @@ def mention(author: str, stdin: bool):
         state.init(branch=branch, base=base, runner=runner, pr_node_id=pr_node_id)
         state.set("mention:status", "processing")
         
-        # Start orchestrator with mention prompt
+        # Build init prompt with full context
+        init_prompt = MENTION_INIT_PROMPT.format(
+            repo=repo,
+            pr_number=pr_number,
+            branch=branch,
+            base=base,
+            runner=runner,
+            author=author,
+            body=body,
+        )
+        
+        # Start orchestrator with mention init prompt
         result = start_session(
             name="orchestrator",
             pr_number=pr_number,
             repo=repo,
-            prompt=mention_prompt,
+            prompt=init_prompt,
         )
         
         state.set_agent(
             "orchestrator",
-            session=result["session"],
+            session=result["session_id"],
             fifo=result["fifo"],
             pid=str(result["pid"]),
             log=result["log"],
             model=result.get("model", ""),
         )
         
-        click.echo(f"✅ Started orchestrator (session: {result['session'][:8]}...)")
+        click.echo(f"✅ Started orchestrator (session: {result['session_id']})")
         
         # Poll for completion
         bot_name = os.environ.get("BOT_NAME", "")

@@ -15,17 +15,21 @@ DROID = Path.home() / ".local" / "bin" / "droid"
 
 def start_session(
     name: str,
-    model: str,
-    pr_number: int,
-    repo: str,
+    model: str = "claude-opus-4-5-20251101",
+    pr_number: int = 0,
+    repo: str = "",
     cwd: str | None = None,
     auto_level: str = "high",
+    prompt: str | None = None,
 ) -> dict:
     """Start a new droid session.
     
     Returns:
         dict with keys: session_id, fifo, pid, log
     """
+    from droid_agent_sdk import FIFOTransport
+    from droid_agent_sdk.protocol import add_user_message_request
+    
     cwd = cwd or os.getcwd()
     pr = str(pr_number)
     safe_repo = repo.replace("/", "-")
@@ -73,6 +77,12 @@ def start_session(
                 break
         except Exception:
             pass
+    
+    # Send prompt if provided
+    if prompt and session_id:
+        transport = FIFOTransport.restore(fifo_path=fifo, log_path="/dev/null")
+        request = add_user_message_request(prompt)
+        transport.send(request)
     
     return {
         "session_id": session_id or "",
@@ -261,6 +271,26 @@ RUNNER={runner}
 MENTION_PROMPT = """<system-instruction>
 你是 Orchestrator，负责编排 duo review 流程。
 首先 load skill: duoduo
+
+<USER_MENTION repo="{repo}" pr="{pr_number}" author="{author}">
+{body}
+</USER_MENTION>
+
+读取 ~/.factory/skills/duoduo/stages/0-mention-orchestrator.md 理解并处理用户请求。
+</system-instruction>
+"""
+
+
+MENTION_INIT_PROMPT = """<system-instruction>
+你是 Orchestrator，负责编排 duo review 流程。
+首先 load skill: duoduo
+
+## 关键变量
+PR_NUMBER={pr_number}
+REPO={repo}
+PR_BRANCH={branch}
+BASE_BRANCH={base}
+RUNNER={runner}
 
 <USER_MENTION repo="{repo}" pr="{pr_number}" author="{author}">
 {body}
