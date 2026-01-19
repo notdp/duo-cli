@@ -13,7 +13,7 @@ authors = [{ name = "notdp" }]
 keywords = ["droid", "agent", "cli", "pr-review", "duo"]
 dependencies = [
     "click>=8.0",
-    "droid-agent-sdk @ git+https://github.com/notdp/droid-agent-sdk.git@cb096b4",
+    "droid-agent-sdk @ git+https://github.com/notdp/droid-agent-sdk.git",
 ]
 
 [project.scripts]
