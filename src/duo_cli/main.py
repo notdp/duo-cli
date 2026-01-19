@@ -1249,5 +1249,261 @@ def comment_delete(node_id: str, yes: bool):
     click.echo(f"Deleted {node_id}")
 
 
+# =============================================================================
+# Review commands (inline comments on PR diff)
+# =============================================================================
+
+@main.group()
+def review():
+    """Manage GitHub PR reviews with inline comments.
+    
+    Unlike regular comments, review comments appear on specific lines
+    in the "Files changed" tab of the PR.
+    
+    \b
+    Examples:
+        duo-cli review post --body "LGTM" --stdin < findings.json
+        duo-cli review list
+    """
+    pass
+
+
+@review.command("post")
+@click.option("--body", default="", help="Review summary body")
+@click.option("--event", type=click.Choice(["COMMENT", "APPROVE", "REQUEST_CHANGES"]), default="COMMENT", help="Review event type")
+@click.option("--stdin", is_flag=True, help="Read inline comments JSON from stdin")
+def review_post(body: str, event: str, stdin: bool):
+    """Post a PR review with inline comments.
+    
+    Reads inline comments as JSON array from stdin:
+    [
+      {"path": "src/file.py", "line": 42, "body": "Issue here"},
+      {"path": "src/other.py", "start_line": 10, "line": 12, "body": "Multi-line"}
+    ]
+    
+    Each comment object:
+      - path: (required) File path relative to repo root
+      - line: (required) End line number in the diff
+      - body: (required) Comment text
+      - start_line: (optional) Start line for multi-line comments
+      - side: (optional) LEFT or RIGHT (default: RIGHT)
+    
+    \b
+    Examples:
+        # Post review with inline comments
+        duo-cli review post --body "Review findings" --stdin <<'EOF'
+        [{"path": "src/main.py", "line": 10, "body": "Issue here"}]
+        EOF
+        
+        # Approve PR
+        duo-cli review post --event APPROVE --body "LGTM"
+        
+        # No findings
+        duo-cli review post --body "No issues" --stdin <<< '[]'
+    """
+    repo = get_env("DROID_REPO")
+    pr = get_env("DROID_PR_NUMBER")
+    
+    # Parse inline comments from stdin
+    comments = []
+    if stdin:
+        stdin_content = sys.stdin.read().strip()
+        if stdin_content:
+            try:
+                comments = json.loads(stdin_content)
+                if not isinstance(comments, list):
+                    click.echo("Error: stdin must be a JSON array", err=True)
+                    sys.exit(1)
+            except json.JSONDecodeError as e:
+                click.echo(f"Error: Invalid JSON: {e}", err=True)
+                sys.exit(1)
+    
+    # Get latest commit SHA (required for review API)
+    result = _run_gh([
+        "pr", "view", pr, "--repo", repo,
+        "--json", "headRefOid",
+        "-q", ".headRefOid"
+    ])
+    if result.returncode != 0:
+        click.echo(f"Error getting commit SHA: {result.stderr}", err=True)
+        sys.exit(1)
+    commit_sha = result.stdout.strip()
+    
+    # Build review payload
+    payload = {
+        "commit_id": commit_sha,
+        "body": body,
+        "event": event,
+        "comments": []
+    }
+    
+    for c in comments:
+        if not all(k in c for k in ["path", "line", "body"]):
+            click.echo(f"Error: Each comment must have path, line, body: {c}", err=True)
+            sys.exit(1)
+        
+        comment_obj = {
+            "path": c["path"],
+            "line": int(c["line"]),
+            "body": c["body"],
+        }
+        if "start_line" in c:
+            comment_obj["start_line"] = int(c["start_line"])
+            comment_obj["start_side"] = c.get("start_side", "RIGHT")
+        if "side" in c:
+            comment_obj["side"] = c["side"]
+        payload["comments"].append(comment_obj)
+    
+    # Create review via REST API
+    owner, repo_name = repo.split("/")
+    result = subprocess.run(
+        ["gh", "api", f"/repos/{owner}/{repo_name}/pulls/{pr}/reviews",
+         "--method", "POST", "--input", "-"],
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+        env=_get_gh_env(),
+    )
+    
+    if result.returncode != 0:
+        click.echo(f"Error: {result.stderr}", err=True)
+        sys.exit(1)
+    
+    data = json.loads(result.stdout)
+    review_id = data.get("id")
+    click.echo(f"Created review {review_id} with {len(comments)} inline comment(s)")
+
+
+@review.command("list")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+def review_list(as_json: bool):
+    """List all reviews on the PR."""
+    repo = get_env("DROID_REPO")
+    pr = get_env("DROID_PR_NUMBER")
+    owner, repo_name = repo.split("/")
+    
+    result = subprocess.run(
+        ["gh", "api", f"/repos/{owner}/{repo_name}/pulls/{pr}/reviews"],
+        capture_output=True,
+        text=True,
+        env=_get_gh_env(),
+    )
+    
+    if result.returncode != 0:
+        click.echo(f"Error: {result.stderr}", err=True)
+        sys.exit(1)
+    
+    reviews = json.loads(result.stdout)
+    
+    if as_json:
+        click.echo(json.dumps(reviews, indent=2))
+        return
+    
+    if not reviews:
+        click.echo("No reviews found")
+        return
+    
+    for r in reviews:
+        state = r.get("state", "?")
+        user = r.get("user", {}).get("login", "?")
+        review_id = r.get("id")
+        body_preview = (r.get("body") or "")[:50]
+        click.echo(f"{review_id}  {state:20} by {user:15} {body_preview}")
+
+
+@review.command("edit")
+@click.argument("comment_id", type=int)
+@click.argument("body", required=False)
+@click.option("--stdin", is_flag=True, help="Read body from stdin")
+def review_edit(comment_id: int, body: str | None, stdin: bool):
+    """Edit a review comment (inline comment).
+    
+    Note: This edits individual inline comments, not the review body.
+    Use the comment ID from the review comments API.
+    
+    \b
+    Examples:
+        duo-cli review edit 12345678 "Updated comment"
+        echo "New content" | duo-cli review edit 12345678 --stdin
+    """
+    if stdin:
+        body = sys.stdin.read().strip()
+    
+    if not body:
+        click.echo("Error: Body required (use argument or --stdin)", err=True)
+        sys.exit(1)
+    
+    repo = get_env("DROID_REPO")
+    pr = get_env("DROID_PR_NUMBER")
+    owner, repo_name = repo.split("/")
+    
+    result = subprocess.run(
+        ["gh", "api", f"/repos/{owner}/{repo_name}/pulls/comments/{comment_id}",
+         "--method", "PATCH", "-f", f"body={body}"],
+        capture_output=True,
+        text=True,
+        env=_get_gh_env(),
+    )
+    
+    if result.returncode != 0:
+        click.echo(f"Error: {result.stderr}", err=True)
+        sys.exit(1)
+    
+    click.echo(f"Updated comment {comment_id}")
+
+
+@review.command("hide")
+@click.argument("node_id")
+@click.option("--reason", type=click.Choice(["ABUSE", "OFF_TOPIC", "OUTDATED", "RESOLVED", "SPAM"]), 
+              default="OUTDATED", help="Reason for hiding")
+def review_hide(node_id: str, reason: str):
+    """Hide (minimize) a review comment.
+    
+    Requires the GraphQL node ID (starts with PRRC_ for review comments).
+    
+    \b
+    Examples:
+        duo-cli review hide PRRC_kwDOxxx
+        duo-cli review hide PRRC_kwDOxxx --reason RESOLVED
+    """
+    query = f'''mutation {{
+        minimizeComment(input: {{subjectId: "{node_id}", classifier: {reason}}}) {{
+            minimizedComment {{ isMinimized }}
+        }}
+    }}'''
+    
+    result = _run_gh(["api", "graphql", "-f", f"query={query}"])
+    
+    if result.returncode != 0:
+        click.echo(f"Error: {result.stderr}", err=True)
+        sys.exit(1)
+    
+    click.echo(f"Hidden {node_id}")
+
+
+@review.command("unhide")
+@click.argument("node_id")
+def review_unhide(node_id: str):
+    """Unhide (unminimize) a review comment.
+    
+    \b
+    Examples:
+        duo-cli review unhide PRRC_kwDOxxx
+    """
+    query = f'''mutation {{
+        unminimizeComment(input: {{subjectId: "{node_id}"}}) {{
+            unminimizedComment {{ isMinimized }}
+        }}
+    }}'''
+    
+    result = _run_gh(["api", "graphql", "-f", f"query={query}"])
+    
+    if result.returncode != 0:
+        click.echo(f"Error: {result.stderr}", err=True)
+        sys.exit(1)
+    
+    click.echo(f"Unhidden {node_id}")
+
+
 if __name__ == "__main__":
     main()
