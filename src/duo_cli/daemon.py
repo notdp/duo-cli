@@ -2,8 +2,8 @@
 """Daemon for running droid session.
 
 Usage:
-    python -m duo_cli.daemon <name> <model> <pr> <repo> <cwd> <auto>
-    python -m duo_cli.daemon <name> "" <pr> <repo> <cwd> <auto> --resume <session_id>
+    python -m duo_cli.daemon <name> <model> <workspace> <cwd> <auto>
+    python -m duo_cli.daemon <name> "" <workspace> <cwd> <auto> --resume <session_id>
 """
 
 import json
@@ -18,16 +18,15 @@ DROID = Path.home() / ".local" / "bin" / "droid"
 
 
 def main():
-    if len(sys.argv) < 7:
-        print("Usage: python -m duo_cli.daemon <name> <model> <pr> <repo> <cwd> <auto> [--resume <session_id>]")
+    if len(sys.argv) < 6:
+        print("Usage: python -m duo_cli.daemon <name> <model> <workspace> <cwd> <auto> [--resume <session_id>]")
         sys.exit(1)
     
     name = sys.argv[1]
     model = sys.argv[2]
-    pr = sys.argv[3]
-    repo = sys.argv[4]
-    cwd = sys.argv[5]
-    auto_level = sys.argv[6]
+    workspace = sys.argv[3]
+    cwd = sys.argv[4]
+    auto_level = sys.argv[5]
     
     # Check for resume mode
     resume_mode = "--resume" in sys.argv
@@ -37,9 +36,8 @@ def main():
         if idx + 1 < len(sys.argv):
             session_id = sys.argv[idx + 1]
     
-    safe_repo = repo.replace("/", "-")
-    fifo = f"/tmp/duo-{safe_repo}-{pr}-{name}"
-    log = f"/tmp/duo-{safe_repo}-{pr}-{name}.log"
+    fifo = f"/tmp/duo-{workspace}-{name}"
+    log = f"/tmp/duo-{workspace}-{name}.log"
     
     log_file = open(log, "a", buffering=1)
     

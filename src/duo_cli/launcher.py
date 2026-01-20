@@ -13,6 +13,14 @@ from pathlib import Path
 DROID = Path.home() / ".local" / "bin" / "droid"
 
 
+def make_workspace(repo: str = "", pr_number: int = 0) -> str:
+    """Create workspace identifier from repo and PR number."""
+    if repo and pr_number:
+        safe_repo = repo.replace("/", "-")
+        return f"{safe_repo}-{pr_number}"
+    return "default"
+
+
 def start_session(
     name: str,
     model: str = "claude-opus-4-5-20251101",
@@ -21,21 +29,21 @@ def start_session(
     cwd: str | None = None,
     auto_level: str = "high",
     prompt: str | None = None,
+    workspace: str | None = None,
 ) -> dict:
     """Start a new droid session.
     
     Returns:
-        dict with keys: session_id, fifo, pid, log
+        dict with keys: session_id, fifo, pid, log, workspace
     """
     from droid_agent_sdk import FIFOTransport
     from droid_agent_sdk.protocol import add_user_message_request
     
     cwd = cwd or os.getcwd()
-    pr = str(pr_number)
-    safe_repo = repo.replace("/", "-")
+    workspace = workspace or make_workspace(repo, pr_number)
     
-    fifo = f"/tmp/duo-{safe_repo}-{pr}-{name}"
-    log = f"/tmp/duo-{safe_repo}-{pr}-{name}.log"
+    fifo = f"/tmp/duo-{workspace}-{name}"
+    log = f"/tmp/duo-{workspace}-{name}.log"
     
     # Clean up old FIFO
     if os.path.exists(fifo):
@@ -53,7 +61,7 @@ def start_session(
     daemon_proc = subprocess.Popen(
         [
             "nohup", sys.executable, "-m", "duo_cli.daemon",
-            name, model, pr, repo, cwd, auto_level,
+            name, model, workspace, cwd, auto_level,
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -90,30 +98,31 @@ def start_session(
         "pid": daemon_proc.pid,
         "log": log,
         "model": model,
+        "workspace": workspace,
     }
 
 
 def resume_session(
     name: str,
     session_id: str,
-    pr_number: int,
-    repo: str,
+    pr_number: int = 0,
+    repo: str = "",
     cwd: str | None = None,
     auto_level: str = "high",
+    workspace: str | None = None,
 ) -> dict:
     """Resume an existing droid session using load_session.
     
     Used for @mention handling to restore conversation history.
     
     Returns:
-        dict with keys: fifo, pid, log
+        dict with keys: fifo, pid, log, workspace
     """
     cwd = cwd or os.getcwd()
-    pr = str(pr_number)
-    safe_repo = repo.replace("/", "-")
+    workspace = workspace or make_workspace(repo, pr_number)
     
-    fifo = f"/tmp/duo-{safe_repo}-{pr}-{name}"
-    log = f"/tmp/duo-{safe_repo}-{pr}-{name}.log"
+    fifo = f"/tmp/duo-{workspace}-{name}"
+    log = f"/tmp/duo-{workspace}-{name}.log"
     
     # Clean up old FIFO
     if os.path.exists(fifo):
@@ -124,7 +133,7 @@ def resume_session(
     daemon_proc = subprocess.Popen(
         [
             "nohup", sys.executable, "-m", "duo_cli.daemon",
-            name, "", pr, repo, cwd, auto_level, "--resume", session_id,
+            name, "", workspace, cwd, auto_level, "--resume", session_id,
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -139,6 +148,7 @@ def resume_session(
         "fifo": fifo,
         "pid": daemon_proc.pid,
         "log": log,
+        "workspace": workspace,
     }
 
 
