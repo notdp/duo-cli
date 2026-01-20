@@ -32,43 +32,50 @@ def start_session(
     workspace: str | None = None,
 ) -> dict:
     """Start a new droid session.
-    
+
     Returns:
         dict with keys: session_id, fifo, pid, log, workspace
     """
     from droid_agent_sdk import FIFOTransport
     from droid_agent_sdk.protocol import add_user_message_request
-    
+
     cwd = cwd or os.getcwd()
     workspace = workspace or make_workspace(repo, pr_number)
-    
+
     fifo = f"/tmp/duo-{workspace}-{name}"
     log = f"/tmp/duo-{workspace}-{name}.log"
-    
+
     # Clean up old FIFO
     if os.path.exists(fifo):
         os.remove(fifo)
     os.mkfifo(fifo)
-    
+
     # Clear log
     open(log, "w").close()
-    
+
     # Build environment with agent identity
     env = os.environ.copy()
     env["DROID_AGENT_NAME"] = name
-    
+
     # Start daemon
     daemon_proc = subprocess.Popen(
         [
-            "nohup", sys.executable, "-m", "duo_cli.daemon",
-            name, model, workspace, cwd, auto_level,
+            "nohup",
+            sys.executable,
+            "-m",
+            "duo_cli.daemon",
+            name,
+            model,
+            workspace,
+            cwd,
+            auto_level,
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
         env=env,
     )
-    
+
     # Wait for session ID (max 15 seconds)
     session_id = None
     for _ in range(30):
@@ -85,13 +92,13 @@ def start_session(
                 break
         except Exception:
             pass
-    
+
     # Send prompt if provided
     if prompt and session_id:
         transport = FIFOTransport.restore(fifo_path=fifo, log_path="/dev/null")
         request = add_user_message_request(prompt)
         transport.send(request)
-    
+
     return {
         "session_id": session_id or "",
         "fifo": fifo,
@@ -112,38 +119,47 @@ def resume_session(
     workspace: str | None = None,
 ) -> dict:
     """Resume an existing droid session using load_session.
-    
+
     Used for @mention handling to restore conversation history.
-    
+
     Returns:
         dict with keys: fifo, pid, log, workspace
     """
     cwd = cwd or os.getcwd()
     workspace = workspace or make_workspace(repo, pr_number)
-    
+
     fifo = f"/tmp/duo-{workspace}-{name}"
     log = f"/tmp/duo-{workspace}-{name}.log"
-    
+
     # Clean up old FIFO
     if os.path.exists(fifo):
         os.remove(fifo)
     os.mkfifo(fifo)
-    
+
     # Start daemon in resume mode
     daemon_proc = subprocess.Popen(
         [
-            "nohup", sys.executable, "-m", "duo_cli.daemon",
-            name, "", workspace, cwd, auto_level, "--resume", session_id,
+            "nohup",
+            sys.executable,
+            "-m",
+            "duo_cli.daemon",
+            name,
+            "",
+            workspace,
+            cwd,
+            auto_level,
+            "--resume",
+            session_id,
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         start_new_session=True,
         env=os.environ.copy(),
     )
-    
+
     # No need to wait here - FIFO write will block until daemon opens read end
     # Daemon opens FIFO only after load_session completes
-    
+
     return {
         "fifo": fifo,
         "pid": daemon_proc.pid,
@@ -156,15 +172,16 @@ def cleanup_old_processes(repo: str, pr_number: int) -> None:
     """Kill old session processes and remove temp files."""
     safe_repo = repo.replace("/", "-")
     pattern = f"duo-{safe_repo}-{pr_number}"
-    
+
     # Kill processes
     subprocess.run(
         ["pkill", "-f", f"duo_cli.daemon.*{repo}.*{pr_number}"],
         capture_output=True,
     )
-    
+
     # Remove FIFOs and logs
     import glob
+
     for f in glob.glob(f"/tmp/{pattern}-*"):
         try:
             os.remove(f)
@@ -176,17 +193,24 @@ def cleanup_comments(repo: str, pr_number: int) -> None:
     """Remove all DUO comments from PR."""
     result = subprocess.run(
         [
-            "gh", "pr", "view", str(pr_number), "--repo", repo,
-            "--json", "comments",
-            "-q", '.comments[] | select(.body | test("<!-- duo-")) | .id',
+            "gh",
+            "pr",
+            "view",
+            str(pr_number),
+            "--repo",
+            repo,
+            "--json",
+            "comments",
+            "-q",
+            '.comments[] | select(.body | test("<!-- duo-")) | .id',
         ],
         capture_output=True,
         text=True,
     )
-    
+
     if result.returncode != 0:
         return
-    
+
     for node_id in result.stdout.strip().split("\n"):
         if node_id:
             query = f'mutation {{ deleteIssueComment(input: {{id: "{node_id}"}}) {{ clientMutationId }} }}'
@@ -200,16 +224,19 @@ def cleanup_fix_branches(repo: str, pr_number: int) -> None:
     """Delete duo fix branches."""
     result = subprocess.run(
         [
-            "gh", "api", f"repos/{repo}/git/matching-refs/heads/duo/pr{pr_number}-",
-            "--jq", ".[].ref",
+            "gh",
+            "api",
+            f"repos/{repo}/git/matching-refs/heads/duo/pr{pr_number}-",
+            "--jq",
+            ".[].ref",
         ],
         capture_output=True,
         text=True,
     )
-    
+
     if result.returncode != 0:
         return
-    
+
     for ref in result.stdout.strip().split("\n"):
         if ref:
             branch = ref.replace("refs/heads/", "")
@@ -221,21 +248,24 @@ def cleanup_fix_branches(repo: str, pr_number: int) -> None:
 
 def get_pr_info(pr_number: int | None = None) -> dict | None:
     """Get PR info from gh CLI.
-    
+
     Returns:
         dict with keys: number, repo, branch, base, node_id
     """
     cmd = ["gh", "pr", "view"]
     if pr_number:
         cmd.append(str(pr_number))
-    cmd.extend([
-        "--json", "id,number,baseRefName,headRefName,headRepositoryOwner,headRepository",
-    ])
-    
+    cmd.extend(
+        [
+            "--json",
+            "id,number,baseRefName,headRefName,headRepositoryOwner,headRepository",
+        ]
+    )
+
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         return None
-    
+
     try:
         data = json.loads(result.stdout)
         return {
@@ -251,7 +281,7 @@ def get_pr_info(pr_number: int | None = None) -> dict | None:
 
 ORCHESTRATOR_PROMPT = """<system-instruction>
 你是 Orchestrator，负责编排 duo review 流程。
-首先 load skill: duoduo
+
 
 ## 关键变量
 PR_NUMBER={pr_number}
@@ -266,11 +296,8 @@ RUNNER={runner}
 - 只能执行 duo-cli 命令、通过 FIFO 与 Agent 通信
 
 ## 执行流程
-1. 读取 ~/.factory/skills/duoduo/stages/1-pr-review-orchestrator.md 获取阶段 1 详细指令
-2. 按指令执行：并行启动 Codex/Opus（它们自己创建占位评论）
-3. 等待 Agent 通过 FIFO 发回结果
-4. 依次执行后续阶段
-5. 每个阶段执行前必须先读取对应的 ~/.factory/skills/duoduo/stages/*-orchestrator.md 文件
+1. You must load skill: duoduo FIRST. Then read ~/.factory/skills/duoduo/SKILL.md
+2. Read ~/.factory/skills/duoduo/stages/1-pr-review-orchestrator.md to get detailed instructions for stage 1
 
 ## 开始
 立即执行阶段 1。
