@@ -233,12 +233,15 @@ GitHub Integration:
 
 \b
 Environment Variables:
-  DROID_REPO           Repository (owner/repo)
-  DROID_PR_NUMBER      PR number
-  DROID_BRANCH         PR branch name
-  DROID_BASE           Base branch name
-  DROID_PR_NODE_ID     PR GraphQL node ID
-  RUNNER               Runner type (droid/workflow)
+  DROID_REPO              Repository (owner/repo)
+  DROID_PR_NUMBER         PR number
+  DROID_BRANCH            PR branch name
+  DROID_BASE              Base branch name
+  DROID_PR_NODE_ID        PR GraphQL node ID
+  RUNNER                  Runner type (droid/workflow)
+  DUO_MODEL_ORCHESTRATOR  Model for Orchestrator (default: claude-opus-4-5-20251101)
+  DUO_MODEL_OPUS          Model for opus agent (default: claude-opus-4-5-20251101)
+  DUO_MODEL_CODEX         Model for codex agent (default: gpt-5.2)
 
 \b
 State Keys:
@@ -260,6 +263,8 @@ Examples:
 \b
   # Agent management
   duo-cli spawn opus                        # Start Opus agent
+  duo-cli spawn opus --model custom:Kimi    # Use custom model
+  duo-cli init --model claude-sonnet-4-20250514  # Custom orchestrator model
   duo-cli resume orchestrator               # Resume Orchestrator
   duo-cli status                            # Check all agents status
   duo-cli logs opus                         # View Opus logs
@@ -303,7 +308,7 @@ class CustomGroup(click.Group):
 
 
 @click.group(cls=CustomGroup)
-@click.version_option(version="0.1.0")
+@click.version_option(version="0.3.0")
 def main():
     """duo-cli - CLI for duo multi-agent PR review."""
     pass
@@ -316,7 +321,8 @@ main.help = HELP_TEXT
 @click.argument("pr_number", required=False, type=int)
 @click.option("--no-cleanup", is_flag=True, help="Skip cleanup step")
 @click.option("--watch", is_flag=True, help="Watch progress after init")
-def init(pr_number: int | None, no_cleanup: bool, watch: bool):
+@click.option("--model", default=None, help="Model for Orchestrator (overrides DUO_MODEL_ORCHESTRATOR)")
+def init(pr_number: int | None, no_cleanup: bool, watch: bool, model: str | None):
     """Initialize duo PR review.
     
     Reads from environment variables:
@@ -393,10 +399,13 @@ def init(pr_number: int | None, no_cleanup: bool, watch: bool):
     state.init(branch=branch, base=base, runner=runner, pr_node_id=pr_node_id)
     
     # Start Orchestrator
-    click.echo("🤖 Starting Orchestrator...")
+    orchestrator_model = model or os.environ.get(
+        "DUO_MODEL_ORCHESTRATOR", "claude-opus-4-5-20251101"
+    )
+    click.echo(f"🤖 Starting Orchestrator ({orchestrator_model})...")
     result = start_session(
         name="orchestrator",
-        model="claude-opus-4-5-20251101",
+        model=orchestrator_model,
         pr_number=pr_number,
         repo=repo,
         auto_level="high",
@@ -477,26 +486,30 @@ def _watch_progress(state: SwarmState, repo: str, pr_number: int):
 @main.command()
 @click.argument("agent", type=click.Choice(["opus", "codex"]))
 @click.option("--prompt-file", "-f", help="File containing initial prompt")
-def spawn(agent: str, prompt_file: str | None):
+@click.option("--model", "-m", default=None, help="Model to use (overrides DUO_MODEL_OPUS/DUO_MODEL_CODEX)")
+def spawn(agent: str, prompt_file: str | None, model: str | None):
     """Spawn an agent (opus or codex).
-    
+
     \b
     Examples:
         duo-cli spawn opus
         duo-cli spawn codex
         duo-cli spawn opus -f /path/to/prompt.txt
+        duo-cli spawn opus --model "custom:Kimi-K2-0"
     """
     state = get_state()
     repo = state.repo
     pr_number = state.pr_number
-    
-    # Model mapping
-    models = {
-        "opus": "claude-opus-4-5-20251101",
-        "codex": "gpt-5.2",
+
+    # Default models from env or hardcoded
+    default_models = {
+        "opus": os.environ.get("DUO_MODEL_OPUS", "claude-opus-4-5-20251101"),
+        "codex": os.environ.get("DUO_MODEL_CODEX", "gpt-5.2"),
     }
-    model = models[agent]
-    
+
+    # CLI parameter overrides env/default
+    model = model or default_models[agent]
+
     click.echo(f"🚀 Spawning {agent} ({model})...")
     
     result = start_session(
@@ -686,8 +699,12 @@ def mention(author: str, stdin: bool):
         )
         
         # Start orchestrator with mention init prompt
+        orchestrator_model = os.environ.get(
+            "DUO_MODEL_ORCHESTRATOR", "claude-opus-4-5-20251101"
+        )
         result = start_session(
             name="orchestrator",
+            model=orchestrator_model,
             pr_number=pr_number,
             repo=repo,
             prompt=init_prompt,
