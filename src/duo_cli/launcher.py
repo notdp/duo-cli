@@ -57,10 +57,9 @@ def start_session(
     env = os.environ.copy()
     env["DROID_AGENT_NAME"] = name
 
-    # Start daemon
+    # Start daemon (no nohup needed, start_new_session=True handles detaching)
     daemon_proc = subprocess.Popen(
         [
-            "nohup",
             sys.executable,
             "-m",
             "duo_cli.daemon",
@@ -136,10 +135,9 @@ def resume_session(
         os.remove(fifo)
     os.mkfifo(fifo)
 
-    # Start daemon in resume mode
+    # Start daemon in resume mode (no nohup needed, start_new_session=True handles detaching)
     daemon_proc = subprocess.Popen(
         [
-            "nohup",
             sys.executable,
             "-m",
             "duo_cli.daemon",
