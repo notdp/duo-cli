@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import json
+import asyncio
 import os
 import subprocess
-import sys
-import time
-from pathlib import Path
 
-
-DROID = Path.home() / ".local" / "bin" / "droid"
+from droid_agent_sdk import DroidSession
+from droid_agent_sdk.protocol import add_user_message_request
 
 
 def make_workspace(repo: str = "", pr_number: int = 0) -> str:
@@ -28,81 +25,42 @@ def start_session(
     repo: str = "",
     cwd: str | None = None,
     auto_level: str = "high",
+    reasoning_effort: str = "high",
     prompt: str | None = None,
     workspace: str | None = None,
 ) -> dict:
     """Start a new droid session.
 
     Returns:
-        dict with keys: session_id, fifo, pid, log, workspace
+        dict with keys: session_id, fifo, pid, log, model, workspace
     """
-    from droid_agent_sdk import FIFOTransport
-    from droid_agent_sdk.protocol import add_user_message_request
-
     cwd = cwd or os.getcwd()
     workspace = workspace or make_workspace(repo, pr_number)
 
-    fifo = f"/tmp/duo-{workspace}-{name}"
-    log = f"/tmp/duo-{workspace}-{name}.log"
-
-    # Clean up old FIFO
-    if os.path.exists(fifo):
-        os.remove(fifo)
-    os.mkfifo(fifo)
-
-    # Clear log
-    open(log, "w").close()
-
-    # Build environment with agent identity
-    env = os.environ.copy()
-    env["DROID_AGENT_NAME"] = name
-
-    # Start daemon (no nohup needed, start_new_session=True handles detaching)
-    daemon_proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "duo_cli.daemon",
-            name,
-            model,
-            workspace,
-            cwd,
-            auto_level,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-        env=env,
+    # Use SDK DroidSession (high-level API)
+    session = DroidSession(
+        name=name,
+        model=model,
+        workspace=workspace,
+        cwd=cwd,
+        auto_level=auto_level,
+        reasoning_effort=reasoning_effort,
+        extra_env={"DROID_AGENT_NAME": name},
     )
 
-    # Wait for session ID (max 15 seconds)
-    session_id = None
-    for _ in range(30):
-        time.sleep(0.5)
-        try:
-            with open(log, "r") as f:
-                for line in f:
-                    if '"sessionId"' in line:
-                        data = json.loads(line)
-                        if "result" in data and "sessionId" in data["result"]:
-                            session_id = data["result"]["sessionId"]
-                            break
-            if session_id:
-                break
-        except Exception:
-            pass
+    # Bridge async to sync with asyncio.run()
+    session_id = asyncio.run(session.start())
 
     # Send prompt if provided
     if prompt and session_id:
-        transport = FIFOTransport.restore(fifo_path=fifo, log_path="/dev/null")
         request = add_user_message_request(prompt)
-        transport.send(request)
+        session.transport.send(request)
 
     return {
-        "session_id": session_id or "",
-        "fifo": fifo,
-        "pid": daemon_proc.pid,
-        "log": log,
+        "session_id": session_id,
+        "fifo": str(session.transport.fifo_path),
+        "pid": session.transport.pid,
+        "log": str(session.transport.log_path),
         "model": model,
         "workspace": workspace,
     }
@@ -114,12 +72,11 @@ def resume_session(
     pr_number: int = 0,
     repo: str = "",
     cwd: str | None = None,
-    auto_level: str = "high",
     workspace: str | None = None,
 ) -> dict:
     """Resume an existing droid session using load_session.
 
-    Used for @mention handling to restore conversation history.
+    Note: No model/auto/reasoning parameters - load_session restores original settings.
 
     Returns:
         dict with keys: fifo, pid, log, workspace
@@ -127,41 +84,22 @@ def resume_session(
     cwd = cwd or os.getcwd()
     workspace = workspace or make_workspace(repo, pr_number)
 
-    fifo = f"/tmp/duo-{workspace}-{name}"
-    log = f"/tmp/duo-{workspace}-{name}.log"
-
-    # Clean up old FIFO
-    if os.path.exists(fifo):
-        os.remove(fifo)
-    os.mkfifo(fifo)
-
-    # Start daemon in resume mode (no nohup needed, start_new_session=True handles detaching)
-    daemon_proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "duo_cli.daemon",
-            name,
-            "",
-            workspace,
-            cwd,
-            auto_level,
-            "--resume",
-            session_id,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-        env=os.environ.copy(),
+    # Use SDK DroidSession (high-level API)
+    session = DroidSession(
+        name=name,
+        model="",  # Not needed for resume
+        workspace=workspace,
+        cwd=cwd,
+        extra_env={"DROID_AGENT_NAME": name},
     )
 
-    # No need to wait here - FIFO write will block until daemon opens read end
-    # Daemon opens FIFO only after load_session completes
+    # Bridge async to sync with asyncio.run()
+    asyncio.run(session.resume(session_id))
 
     return {
-        "fifo": fifo,
-        "pid": daemon_proc.pid,
-        "log": log,
+        "fifo": str(session.transport.fifo_path),
+        "pid": session.transport.pid,
+        "log": str(session.transport.log_path),
         "workspace": workspace,
     }
 
@@ -171,9 +109,9 @@ def cleanup_old_processes(repo: str, pr_number: int) -> None:
     safe_repo = repo.replace("/", "-")
     pattern = f"duo-{safe_repo}-{pr_number}"
 
-    # Kill processes
+    # Kill processes (both SDK and old CLI daemon patterns)
     subprocess.run(
-        ["pkill", "-f", f"duo_cli.daemon.*{repo}.*{pr_number}"],
+        ["pkill", "-f", f"droid_agent_sdk.daemon.*{pattern}"],
         capture_output=True,
     )
 
