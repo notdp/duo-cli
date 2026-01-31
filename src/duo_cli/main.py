@@ -161,8 +161,8 @@ def _poll_mention_completion(state: SwarmState, repo: str, pr_number: int, bot_n
     if not last_id:
         last_id = "0"
     
-    # Poll for completion (max 10 minutes)
-    timeout = 600
+    # Poll for completion (max 20 minutes)
+    timeout = 1200
     elapsed = 0
     
     while elapsed < timeout:
