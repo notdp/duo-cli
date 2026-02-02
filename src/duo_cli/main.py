@@ -308,7 +308,7 @@ class CustomGroup(click.Group):
 
 
 @click.group(cls=CustomGroup)
-@click.version_option(version="0.3.0")
+@click.version_option(version="0.4.1")
 def main():
     """duo-cli - CLI for duo multi-agent PR review."""
     pass
